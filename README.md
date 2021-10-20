@@ -1,4 +1,4 @@
-#Hyper JSON Stream
+# Hyper JSON Stream
 
 ## Deserialize an array of jsons asynchronously with hyper
 
