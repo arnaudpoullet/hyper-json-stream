@@ -61,4 +61,4 @@ To deserialize the "Shop" struct in the next example use `level = 2`
 
 ## Example
 
-Check out the [Countries](examples/countries.rs) for a working example.
+Check out [Countries](examples/countries.rs) for a working example.
