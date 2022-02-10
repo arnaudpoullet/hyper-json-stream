@@ -1,18 +1,18 @@
-use std::future::Future;
-use std::task::{Context, Poll};
-use std::pin::Pin;
-use futures_core::stream::{Stream, FusedStream};
+use futures_core::stream::{FusedStream, Stream};
 use http::response::Parts;
 use http::StatusCode;
 use hyper::{client::ResponseFuture, Body};
 use serde::de::DeserializeOwned;
 use serde_json::from_slice;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
+use crate::stream::partial_json::PartialJson;
 use std::cmp::min;
 use std::fmt;
-use crate::stream::partial_json::PartialJson;
 
-use crate::util::{JsonStreamError, get_content_length};
+use crate::util::{get_content_length, JsonStreamError};
 
 /// A stream that reads a json list from a `ResponseFuture` and parses each element with
 /// `serde_json`
@@ -20,7 +20,7 @@ use crate::util::{JsonStreamError, get_content_length};
 pub struct JsonStream<T> {
     state: State<T>,
     capacity: usize,
-    level: u32
+    level: u32,
 }
 enum State<T> {
     Connecting(ResponseFuture),
@@ -66,15 +66,16 @@ impl<T: DeserializeOwned> FusedStream for JsonStream<T> {
 }
 impl<T: DeserializeOwned> Stream for JsonStream<T> {
     type Item = Result<T, JsonStreamError>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>)
-                 -> Poll<Option<Result<T, JsonStreamError>>>
-    {
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<T, JsonStreamError>>> {
         let this = self.get_mut();
         let cap = this.capacity;
         let lvl = this.level;
         let state_ref = &mut this.state;
         loop {
-            if let Some(poll) = state_ref.poll(cx, lvl,cap) {
+            if let Some(poll) = state_ref.poll(cx, lvl, cap) {
                 return poll;
             }
         }
@@ -83,53 +84,49 @@ impl<T: DeserializeOwned> Stream for JsonStream<T> {
 
 impl<T: DeserializeOwned> State<T> {
     #[inline]
-    fn poll(&mut self, cx: &mut Context<'_>, lvl: u32, cap: usize)
-            -> Option<Poll<Option<Result<T, JsonStreamError>>>>
-    {
+    fn poll(
+        &mut self,
+        cx: &mut Context<'_>,
+        lvl: u32,
+        cap: usize,
+    ) -> Option<Poll<Option<Result<T, JsonStreamError>>>> {
         match self {
-            State::Connecting(ref mut fut) => {
-                match Pin::new(fut).poll(cx) {
-                    Poll::Pending => {
-                        Some(Poll::Pending)
-                    }
-                    Poll::Ready(Ok(resp)) => {
-                        let (parts, body) = resp.into_parts();
-                        if parts.status == StatusCode::OK {
+            State::Connecting(ref mut fut) => match Pin::new(fut).poll(cx) {
+                Poll::Pending => Some(Poll::Pending),
+                Poll::Ready(Ok(resp)) => {
+                    let (parts, body) = resp.into_parts();
+                    match parts.status {
+                        StatusCode::OK => {
                             let json = PartialJson::new(cap, lvl);
                             *self = State::Collecting(body, json);
-                        } else {
-                            let size = min(get_content_length(&parts), 0x1000);
-                            *self = State::CollectingError(parts, body,
-                                                           Vec::with_capacity(size));
                         }
+                        StatusCode::NO_CONTENT => *self = State::Done(),
+                        _ => {
+                            let size = min(get_content_length(&parts), 0x1000);
+                            *self = State::CollectingError(parts, body, Vec::with_capacity(size));
+                        }
+                    }
+                    None
+                }
+                Poll::Ready(Err(e)) => {
+                    *self = State::Done();
+                    Some(Poll::Ready(Some(Err(e.into()))))
+                }
+            },
+            State::Collecting(ref mut body, ref mut json) => match json.next() {
+                Ok(Some(value)) => Some(Poll::Ready(Some(Ok(value)))),
+                Ok(None) => match Pin::new(body).poll_next(cx) {
+                    Poll::Pending => Some(Poll::Pending),
+                    Poll::Ready(Some(Ok(chunk))) => {
+                        json.push(&chunk[..]);
                         None
                     }
-                    Poll::Ready(Err(e)) => {
+                    Poll::Ready(None) => Some(Poll::Ready(None)),
+                    Poll::Ready(Some(Err(e))) => {
                         *self = State::Done();
                         Some(Poll::Ready(Some(Err(e.into()))))
                     }
-                }
-            }
-            State::Collecting(ref mut body, ref mut json) => match json.next() {
-                Ok(Some(value)) => {
-                    Some(Poll::Ready(Some(Ok(value))))
-                }
-                Ok(None) => {
-                    match Pin::new(body).poll_next(cx) {
-                        Poll::Pending => Some(Poll::Pending),
-                        Poll::Ready(Some(Ok(chunk))) => {
-                            json.push(&chunk[..]);
-                            None
-                        }
-                        Poll::Ready(None) => {
-                            Some(Poll::Ready(None))
-                        }
-                        Poll::Ready(Some(Err(e))) => {
-                            *self = State::Done();
-                            Some(Poll::Ready(Some(Err(e.into()))))
-                        }
-                    }
-                }
+                },
                 Err(err) => {
                     *self = State::Done();
                     Some(Poll::Ready(Some(Err(err))))
@@ -159,10 +156,7 @@ impl<T: DeserializeOwned> State<T> {
                     }
                 }
             }
-            State::Done() => {
-                Some(Poll::Ready(None))
-            }
+            State::Done() => Some(Poll::Ready(None)),
         }
     }
 }
-
