@@ -2,8 +2,8 @@ use serde::de::DeserializeOwned;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 
-use serde_json::{from_slice};
-use std::io::{BufRead, Chain, Cursor, Read};
+use serde_json::{from_reader, from_slice};
+use std::io::{Cursor, Read};
 
 use crate::util::JsonStreamError;
 
@@ -33,15 +33,14 @@ impl<T: DeserializeOwned> PartialJson<T> {
     pub fn push(&mut self, bytes: &[u8]) {
         self.buffer.extend(bytes);
     }
-    fn next_value(&mut self) -> Result<T, JsonStreamError> {
+    fn next_value(&mut self) -> Result<T, ::serde_json::Error> {
         let i = self.i - 1;
         let res = {
             let (first, second) = self.buffer.as_slices();
             if first.len() < i {
-                let slice = read_string_from_cursor(Cursor::new(first).chain(Cursor::new(&second[0..i - first.len()])));
-                from_slice(slice.as_bytes()).map_err(|json_err| JsonStreamError::json(&format!("{}: \"{}\"",json_err,slice)))
+                from_reader(Cursor::new(first).chain(Cursor::new(&second[0..i - first.len()])))
             } else {
-                from_slice(&first[0..i]).map_err(|json_err| JsonStreamError::json(&format!("{}: \"{}\"",json_err,String::from_utf8(first[0..i].to_vec()).unwrap_or_else(|e| format!("Not valid UTF8: {}", e)))))
+                from_slice(&first[0..i])
             }
         };
         for _ in self.buffer.drain(0..self.i) {}
@@ -102,21 +101,6 @@ impl<T: DeserializeOwned> PartialJson<T> {
             }
         }
     }
-}
-
-fn read_string_from_cursor(mut cursor: Chain<Cursor<&[u8]>,Cursor<&[u8]>>) -> String {
-    let mut buffer: String = String::new();
-    match cursor.read_line(&mut buffer) {
-        Ok(size) => {
-            if size > 0 {
-                buffer
-            } else {
-                "Nothing to read".to_string()
-            }
-        },
-        Err(e) => format!("Not valid UTF8: {}", e)
-    }
-
 }
 
 #[cfg(test)]

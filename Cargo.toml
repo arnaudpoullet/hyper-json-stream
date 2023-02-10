@@ -1,24 +1,24 @@
 [package]
 name = "hyper-json-stream"
-version = "0.1.2"
+version = "0.1.1"
 authors = ["Arnaud Poullet <arnaudpoullet@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures-core = "0.3.26"
-http = "0.2.8"
-hyper = { version = "0.14.24", features = ["stream"] }
-serde = "1.0.152"
+futures-core = "0.3.17"
+http = "0.2.4"
+hyper = { version = "0.14.13", features = ["stream"] }
+serde = "1.0.125"
 serde_json = "1.0.64"
 
 [dev-dependencies]
-hyper = { version = "0.14.24", features = ["client","http2"] }
-hyper-rustls = "0.23.2"
-serde = { version = "1.0.152", features = ["derive"] }
-futures-util = "0.3.26"
-tokio = { version = "1.25.0", features = ["rt","macros","rt-multi-thread"] }
+hyper = { version = "0.14.13", features = ["client","http2"] }
+hyper-rustls = "0.22.1"
+serde = { version = "1.0.130", features = ["derive"] }
+futures-util = "0.3.17"
+tokio = { version = "1.5.0", features = ["rt","macros","rt-multi-thread"] }
 
 
 [[example]]
