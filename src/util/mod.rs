@@ -1,5 +1,6 @@
 use hyper::StatusCode;
 use std::fmt;
+use std::string::FromUtf8Error;
 
 /// Parse the content length header.
 pub fn get_content_length(parts: &http::response::Parts) -> usize {
@@ -25,8 +26,8 @@ pub enum JsonStreamError {
 
 /// Load errors
 impl JsonStreamError {
-    pub(crate) fn json(s: &str) -> JsonStreamError {
-        JsonStreamError::MalformedJson(String::from(s))
+    pub(crate) fn json(s: String) -> JsonStreamError {
+        JsonStreamError::MalformedJson(s)
     }
 }
 
@@ -58,6 +59,11 @@ impl From<http::header::InvalidHeaderValue> for JsonStreamError {
 impl From<http::uri::InvalidUri> for JsonStreamError {
     fn from(err: http::uri::InvalidUri) -> JsonStreamError {
         JsonStreamError::HttpError(http::Error::from(err))
+    }
+}
+impl From<FromUtf8Error> for JsonStreamError {
+    fn from(value: FromUtf8Error) -> Self {
+        JsonStreamError::json(value.to_string())
     }
 }
 impl From<std::io::Error> for JsonStreamError {

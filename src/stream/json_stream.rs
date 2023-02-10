@@ -3,7 +3,6 @@ use http::response::Parts;
 use http::StatusCode;
 use hyper::{client::ResponseFuture, Body};
 use serde::de::DeserializeOwned;
-use serde_json::from_slice;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -139,7 +138,7 @@ impl<T: DeserializeOwned> State<T> {
                         bytes.extend(chunk.as_ref());
                         None
                     }
-                    Poll::Ready(None) => match from_slice(bytes) {
+                    Poll::Ready(None) => match String::from_utf8(bytes.clone()) {
                         Ok(err_msg) => {
                             let err = JsonStreamError::ApiError(parts.status, err_msg);
                             *self = State::Done();

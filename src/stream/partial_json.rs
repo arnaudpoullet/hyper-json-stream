@@ -33,19 +33,31 @@ impl<T: DeserializeOwned> PartialJson<T> {
     pub fn push(&mut self, bytes: &[u8]) {
         self.buffer.extend(bytes);
     }
-    fn next_value(&mut self) -> Result<T, ::serde_json::Error> {
+    fn next_value(&mut self) -> Result<T, JsonStreamError> {
         let i = self.i - 1;
+        let (first, second) = self.buffer.as_slices();
         let res = {
-            let (first, second) = self.buffer.as_slices();
             if first.len() < i {
                 from_reader(Cursor::new(first).chain(Cursor::new(&second[0..i - first.len()])))
             } else {
                 from_slice(&first[0..i])
             }
         };
+        let result = res.map_err(|json_err| {
+            let piece = if first.len() < i {
+                first[..].to_vec()
+            } else {
+                first[0..i].to_vec()
+            };
+            JsonStreamError::json(format!(
+                "{}: {}",
+                json_err,
+                String::from_utf8(piece).unwrap_or_else(|e| format!("Not valid UTF8: {}", e))
+            ))
+        });
         for _ in self.buffer.drain(0..self.i) {}
         self.i = 0;
-        res
+        result
     }
     pub fn next(&mut self) -> Result<Option<T>, JsonStreamError> {
         loop {
@@ -84,7 +96,7 @@ impl<T: DeserializeOwned> PartialJson<T> {
                     }
                     ']' | '}' => {
                         if self.parens == 0 {
-                            return Err(JsonStreamError::json("Invalid json"));
+                            return Err(JsonStreamError::json("Invalid json".to_string()));
                         }
                         self.parens -= 1;
                         if self.parens == self.level - 1 && !self.last_was_start {
