@@ -1,9 +1,12 @@
-use hyper::{Body, Uri};
+use hyper::Uri;
 
 use futures_util::stream::StreamExt;
-use hyper::Client;
+use http_body_util::Empty;
+use hyper::body::Bytes;
 use hyper_json_stream::JsonStream;
 use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::client::legacy::Client;
+use hyper_util::rt::TokioExecutor;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -16,9 +19,10 @@ pub struct Country {
 async fn main() {
     let url = "https://raw.githubusercontent.com/lutangar/cities.json/master/cities.json";
 
-    let client = Client::builder().build::<_, Body>(
+    let client = Client::builder(TokioExecutor::new()).build::<_, Empty<Bytes>>(
         HttpsConnectorBuilder::new()
             .with_native_roots()
+            .unwrap()
             .https_only()
             .enable_http1()
             .build(),

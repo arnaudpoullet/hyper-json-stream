@@ -1,15 +1,17 @@
 use futures_core::stream::{FusedStream, Stream};
 use http::response::Parts;
 use http::StatusCode;
-use hyper::{client::ResponseFuture, Body};
 use serde::de::DeserializeOwned;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::stream::partial_json::PartialJson;
+use hyper::body::{Body, Incoming};
+use hyper_util::client::legacy::ResponseFuture;
 use std::cmp::min;
-use std::fmt;
+use std::io::ErrorKind;
+use std::{fmt, io};
 
 use crate::util::{get_content_length, JsonStreamError};
 
@@ -23,8 +25,8 @@ pub struct JsonStream<T> {
 }
 enum State<T> {
     Connecting(ResponseFuture),
-    Collecting(Body, PartialJson<T>),
-    CollectingError(Parts, Body, Vec<u8>),
+    Collecting(Incoming, PartialJson<T>),
+    CollectingError(Parts, Incoming, Vec<u8>),
     Done(),
 }
 // The ResponseFuture does not implement Sync, but since it can only be accessed through
@@ -114,12 +116,23 @@ impl<T: DeserializeOwned> State<T> {
             },
             State::Collecting(ref mut body, ref mut json) => match json.next() {
                 Ok(Some(value)) => Some(Poll::Ready(Some(Ok(value)))),
-                Ok(None) => match Pin::new(body).poll_next(cx) {
+                Ok(None) => match Pin::new(body).poll_frame(cx) {
                     Poll::Pending => Some(Poll::Pending),
-                    Poll::Ready(Some(Ok(chunk))) => {
-                        json.push(&chunk[..]);
-                        None
-                    }
+                    Poll::Ready(Some(Ok(chunk))) => match chunk.into_data() {
+                        Ok(b) => {
+                            json.push(&b[..]);
+                            None
+                        }
+                        Err(fr) => {
+                            eprintln!("{:?}", fr);
+                            Some(Poll::Ready(Some(Err(JsonStreamError::IOError(
+                                io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    "Could not get bytes from frame",
+                                ),
+                            )))))
+                        }
+                    },
                     Poll::Ready(None) => Some(Poll::Ready(None)),
                     Poll::Ready(Some(Err(e))) => {
                         *self = State::Done();
@@ -132,12 +145,23 @@ impl<T: DeserializeOwned> State<T> {
                 }
             },
             State::CollectingError(ref parts, ref mut body, ref mut bytes) => {
-                match Pin::new(body).poll_next(cx) {
+                match Pin::new(body).poll_frame(cx) {
                     Poll::Pending => Some(Poll::Pending),
-                    Poll::Ready(Some(Ok(chunk))) => {
-                        bytes.extend(chunk.as_ref());
-                        None
-                    }
+                    Poll::Ready(Some(Ok(chunk))) => match chunk.into_data() {
+                        Ok(b) => {
+                            bytes.extend(b.as_ref());
+                            None
+                        }
+                        Err(fr) => {
+                            eprintln!("{:?}", fr);
+                            Some(Poll::Ready(Some(Err(JsonStreamError::IOError(
+                                io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    "Could not get bytes from frame",
+                                ),
+                            )))))
+                        }
+                    },
                     Poll::Ready(None) => match String::from_utf8(bytes.clone()) {
                         Ok(err_msg) => {
                             let err = JsonStreamError::ApiError(parts.status, err_msg);
