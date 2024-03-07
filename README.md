@@ -4,7 +4,7 @@
 
 The code in this library comes from the [backblaze-b2-rs](https://github.com/Darksonn/backblaze-b2-rs/tree/ver0.2/src/b2_future) repo.
 
-This library allows you to consume a  [`hyper::client::ResponseFuture`](https://docs.rs/hyper/0.14.13/hyper/client/struct.ResponseFuture.html) asynchronously while deserializing each element from a json array along the way.
+This library allows you to consume a  [`hyper_util::client::legacy::ResponseFuture`](https://docs.rs/hyper-util/0.1.3/hyper_util/client/legacy/struct.ResponseFuture.html) asynchronously while deserializing each element from a json array along the way.
 
 The deserializing itself is done by the `serde_json` crate and is therefore not asynchronous.
 
@@ -13,10 +13,10 @@ This library allows you to process the elements of a big json without having to 
 ## Usage
  Add the following dependencies to your Cargo.toml:
 ```
-hyper = { version = "0.14.13", features = ["client","http2"] }
-hyper-rustls = "0.22.1"
-serde = { version = "1.0.130", features = ["derive"] }
-futures-util = "0.3.17"
+hyper = "1.2.0"
+hyper-rustls = "0.26.0"
+serde = { version = "1.0.197", features = ["derive"] }
+futures-util = "0.3.30"
 ```
 Create a stream you can iterate on:
 ```
@@ -61,4 +61,4 @@ To deserialize the "Shop" struct in the next example use `level = 2`
 
 ## Example
 
-Check out [Countries](examples/countries.rs) for a working example.
+Check out [Countries](examples/countries.rs) for a working example. The example uses the `http2` feature of the `hyper-rustls` crate.
