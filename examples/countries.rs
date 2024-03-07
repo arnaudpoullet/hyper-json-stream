@@ -24,7 +24,7 @@ async fn main() {
             .with_native_roots()
             .unwrap()
             .https_only()
-            .enable_http1()
+            .enable_http2()
             .build(),
     );
     // Fetch the url...
