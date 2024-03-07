@@ -16,6 +16,7 @@ pub fn get_content_length(parts: &http::response::Parts) -> usize {
 #[non_exhaustive]
 pub enum JsonStreamError {
     HyperError(hyper::Error),
+    ClientError(hyper_util::client::legacy::Error),
     HttpError(http::Error),
     IOError(std::io::Error),
     JsonError(serde_json::Error),
@@ -39,6 +40,11 @@ impl From<serde_json::Error> for JsonStreamError {
 impl From<hyper::Error> for JsonStreamError {
     fn from(err: hyper::Error) -> JsonStreamError {
         JsonStreamError::HyperError(err)
+    }
+}
+impl From<hyper_util::client::legacy::Error> for JsonStreamError {
+    fn from(err: hyper_util::client::legacy::Error) -> JsonStreamError {
+        JsonStreamError::ClientError(err)
     }
 }
 impl From<http::Error> for JsonStreamError {
@@ -82,6 +88,7 @@ impl fmt::Display for JsonStreamError {
                 write!(f, "{} : {}", status, err)
             }
             JsonStreamError::MalformedJson(ref msg) => msg.fmt(f),
+            JsonStreamError::ClientError(err) => err.fmt(f),
         }
     }
 }
@@ -94,6 +101,7 @@ impl std::error::Error for JsonStreamError {
             JsonStreamError::JsonError(err) => Some(err),
             JsonStreamError::ApiError(_, _) => None,
             JsonStreamError::MalformedJson(_) => None,
+            JsonStreamError::ClientError(err) => err.source(),
         }
     }
 }
