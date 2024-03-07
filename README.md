@@ -13,7 +13,7 @@ This library allows you to process the elements of a big json without having to 
 ## Usage
  Add the following dependencies to your Cargo.toml:
 ```
-hyper = { version = "1.2.0" }
+hyper = "1.2.0"
 hyper-rustls = "0.26.0"
 serde = { version = "1.0.197", features = ["derive"] }
 futures-util = "0.3.30"
@@ -61,4 +61,4 @@ To deserialize the "Shop" struct in the next example use `level = 2`
 
 ## Example
 
-Check out [Countries](examples/countries.rs) for a working example.
+Check out [Countries](examples/countries.rs) for a working example. The example uses the `http2` feature of the `hyper-rustls` crate.
