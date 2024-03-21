@@ -2,18 +2,24 @@ use futures_core::stream::{FusedStream, Stream};
 use http::response::Parts;
 use http::StatusCode;
 use serde::de::DeserializeOwned;
+use std::ffi::{c_int, c_uint};
 use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 
+use crate::ffi::{zalloc, zfree};
 use crate::stream::partial_json::PartialJson;
 use hyper::body::{Body, Incoming};
 use hyper_util::client::legacy::ResponseFuture;
-use std::cmp::min;
+use libz_sys as zlib;
+use std::cmp::{self, min};
 use std::io::ErrorKind;
-use std::{fmt, io};
+use std::{fmt, io, mem, ptr};
 
 use crate::util::{get_content_length, JsonStreamError};
+
+use super::encoding::ContentEncoding;
 
 /// A stream that reads a json list from a `ResponseFuture` and parses each element with
 /// `serde_json`
@@ -25,8 +31,15 @@ pub struct JsonStream<T> {
 }
 enum State<T> {
     Connecting(ResponseFuture),
-    Collecting(Incoming, PartialJson<T>),
+    Collecting {
+        body: Incoming,
+        json: PartialJson<T>,
+        encoding: ContentEncoding,
+        stream: *mut zlib::z_stream,
+        total_in: u64,
+    },
     CollectingError(Parts, Incoming, Vec<u8>),
+    EncodingError(),
     Done(),
 }
 // The ResponseFuture does not implement Sync, but since it can only be accessed through
@@ -41,8 +54,9 @@ impl<T> fmt::Debug for JsonStream<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.state {
             State::Connecting(_) => f.pad("JsonStream(connecting)"),
-            State::Collecting(_, _) => f.pad("JsonStream(receiving)"),
+            State::Collecting { .. } => f.pad("JsonStream(receiving)"),
             State::CollectingError(_, _, _) => f.pad("JsonStream(api error)"),
+            State::EncodingError() => f.pad("JsonStream(encoding error)"),
             State::Done() => f.pad("JsonStream(done)"),
         }
     }
@@ -96,10 +110,62 @@ impl<T: DeserializeOwned> State<T> {
                 Poll::Pending => Some(Poll::Pending),
                 Poll::Ready(Ok(resp)) => {
                     let (parts, body) = resp.into_parts();
+                    let content_encoding_opt = parts.headers.get("Content-Encoding");
+                    let encoding = if let Some(content_encoding) = content_encoding_opt {
+                        let content_encoding_str = content_encoding.to_str().unwrap();
+                        ContentEncoding::from_str(content_encoding_str).unwrap()
+                    } else {
+                        ContentEncoding::None
+                    };
                     match parts.status {
                         StatusCode::OK => {
                             let json = PartialJson::new(cap, lvl);
-                            *self = State::Collecting(body, json);
+                            if encoding == ContentEncoding::Gzip {
+                                let stream = Box::into_raw(Box::new(zlib::z_stream {
+                                    next_in: ptr::null_mut(),
+                                    avail_in: 0,
+                                    total_in: 0,
+                                    next_out: ptr::null_mut(),
+                                    avail_out: 0,
+                                    total_out: 0,
+                                    msg: ptr::null_mut(),
+                                    adler: 0,
+                                    data_type: 0,
+                                    reserved: 0,
+                                    opaque: ptr::null_mut(),
+                                    state: ptr::null_mut(),
+                                    zalloc,
+                                    zfree,
+                                }));
+                                let res = unsafe {
+                                    zlib::inflateInit2_(
+                                        stream,
+                                        47,
+                                        zlib::zlibVersion(),
+                                        mem::size_of::<zlib::z_stream>() as c_int,
+                                    )
+                                };
+
+                                if res == zlib::Z_OK {
+                                    *self = State::Collecting {
+                                        body,
+                                        json,
+                                        encoding,
+                                        stream,
+                                        total_in: 0,
+                                    };
+                                } else {
+                                    *self = State::EncodingError();
+                                }
+                            } else {
+                                *self = State::Collecting {
+                                    body,
+                                    json,
+                                    encoding,
+                                    stream: ptr::null_mut(),
+                                    total_in: 0,
+                                };
+                            }
                         }
                         StatusCode::NO_CONTENT => *self = State::Done(),
                         _ => {
@@ -114,13 +180,62 @@ impl<T: DeserializeOwned> State<T> {
                     Some(Poll::Ready(Some(Err(e.into()))))
                 }
             },
-            State::Collecting(ref mut body, ref mut json) => match json.next() {
+            State::Collecting {
+                ref mut body,
+                ref mut json,
+                ref encoding,
+                ref stream,
+                ref mut total_in,
+                ..
+            } => match json.next() {
                 Ok(Some(value)) => Some(Poll::Ready(Some(Ok(value)))),
                 Ok(None) => match Pin::new(body).poll_frame(cx) {
                     Poll::Pending => Some(Poll::Pending),
                     Poll::Ready(Some(Ok(chunk))) => match chunk.into_data() {
                         Ok(b) => {
-                            json.push(&b[..]);
+                            if *encoding == ContentEncoding::None {
+                                json.push(&b[..]);
+                            } else {
+                                let mut bytes_vec = b.to_vec();
+                                loop {
+                                    let mut output_buffer = [0; 1024];
+                                    let data = &mut bytes_vec[*total_in as usize..];
+                                    let inflate_res = unsafe {
+                                        (*(*stream)).next_in = data.as_mut_ptr();
+                                        (*(*stream)).avail_in =
+                                            cmp::min(b.len(), c_uint::MAX as usize) as c_uint;
+                                        (*(*stream)).total_in = *total_in;
+                                        (*(*stream)).next_out = output_buffer.as_mut_ptr();
+                                        (*(*stream)).avail_out =
+                                            cmp::min(output_buffer.len(), c_uint::MAX as usize)
+                                                as c_uint;
+
+                                        zlib::inflate(*stream, zlib::Z_NO_FLUSH)
+                                    };
+
+                                    if inflate_res == zlib::Z_BUF_ERROR || inflate_res == zlib::Z_OK
+                                    {
+                                        unsafe {
+                                            *total_in = (*(*stream)).total_in;
+                                            if (*(*stream)).total_in as usize >= b.len() {
+                                                break;
+                                            }
+                                        }
+
+                                        json.push(&output_buffer);
+                                    } else {
+                                        eprintln!("zlib::inflate returned {}", inflate_res);
+                                        return Some(Poll::Ready(Some(Err(
+                                            JsonStreamError::EncodingError(
+                                                "Failed to decode bytes".to_string(),
+                                            ),
+                                        ))));
+                                    }
+                                }
+
+                                *total_in = 0;
+                            }
+
                             None
                         }
                         Err(fr) => {
@@ -179,6 +294,9 @@ impl<T: DeserializeOwned> State<T> {
                     }
                 }
             }
+            State::EncodingError() => Some(Poll::Ready(Some(Err(JsonStreamError::EncodingError(
+                "Failed to decode the payload with gzip".to_string(),
+            ))))),
             State::Done() => Some(Poll::Ready(None)),
         }
     }
