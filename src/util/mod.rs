@@ -23,6 +23,7 @@ pub enum JsonStreamError {
     ApiError(StatusCode, String),
     /// This type is only returned if the format of the json downloaded is wrong.
     MalformedJson(String),
+    EncodingError(String),
 }
 
 /// Load errors
@@ -89,6 +90,7 @@ impl fmt::Display for JsonStreamError {
             }
             JsonStreamError::MalformedJson(ref msg) => msg.fmt(f),
             JsonStreamError::ClientError(err) => err.fmt(f),
+            JsonStreamError::EncodingError(ref msg) => msg.fmt(f),
         }
     }
 }
@@ -102,6 +104,7 @@ impl std::error::Error for JsonStreamError {
             JsonStreamError::ApiError(_, _) => None,
             JsonStreamError::MalformedJson(_) => None,
             JsonStreamError::ClientError(err) => err.source(),
+            JsonStreamError::EncodingError(_) => None,
         }
     }
 }
