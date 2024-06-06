@@ -13,7 +13,7 @@ use crate::stream::partial_json::PartialJson;
 use hyper::body::{Body, Incoming};
 use hyper_util::client::legacy::ResponseFuture;
 use libz_sys as zlib;
-use std::cmp::{self, min};
+use std::cmp;
 use std::io::ErrorKind;
 use std::{fmt, io, mem, ptr};
 
@@ -169,7 +169,7 @@ impl<T: DeserializeOwned> State<T> {
                         }
                         StatusCode::NO_CONTENT => *self = State::Done(),
                         _ => {
-                            let size = min(get_content_length(&parts), 0x1000);
+                            let size = cmp::min(get_content_length(&parts), 0x1000);
                             *self = State::CollectingError(parts, body, Vec::with_capacity(size));
                         }
                     }
@@ -204,7 +204,7 @@ impl<T: DeserializeOwned> State<T> {
                                         (*(*stream)).next_in = data.as_mut_ptr();
                                         (*(*stream)).avail_in =
                                             cmp::min(b.len(), c_uint::MAX as usize) as c_uint;
-                                        (*(*stream)).total_in = *total_in;
+                                        (*(*stream)).total_in = *total_in as u64;
                                         (*(*stream)).next_out = output_buffer.as_mut_ptr();
                                         (*(*stream)).avail_out =
                                             cmp::min(output_buffer.len(), c_uint::MAX as usize)
@@ -216,7 +216,7 @@ impl<T: DeserializeOwned> State<T> {
                                     if inflate_res == zlib::Z_BUF_ERROR || inflate_res == zlib::Z_OK
                                     {
                                         unsafe {
-                                            *total_in = (*(*stream)).total_in;
+                                            *total_in = (*(*stream)).total_in as u64;
                                             if (*(*stream)).total_in as usize >= b.len() {
                                                 break;
                                             }
