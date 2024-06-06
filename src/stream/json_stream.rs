@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 
 use crate::ffi::{zalloc, zfree};
 use crate::stream::partial_json::PartialJson;
+use crate::stream::ZType;
 use hyper::body::{Body, Incoming};
 use hyper_util::client::legacy::ResponseFuture;
 use libz_sys as zlib;
@@ -204,7 +205,7 @@ impl<T: DeserializeOwned> State<T> {
                                         (*(*stream)).next_in = data.as_mut_ptr();
                                         (*(*stream)).avail_in =
                                             cmp::min(b.len(), c_uint::MAX as usize) as c_uint;
-                                        (*(*stream)).total_in = *total_in as u64;
+                                        (*(*stream)).total_in = (*total_in).z_type();
                                         (*(*stream)).next_out = output_buffer.as_mut_ptr();
                                         (*(*stream)).avail_out =
                                             cmp::min(output_buffer.len(), c_uint::MAX as usize)
